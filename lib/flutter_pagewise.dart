@@ -1,10 +1,12 @@
 library flutter_pagewise;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_pagewise/helpers/grid_helpers.dart';
 
 typedef Widget ItemBuilder<T>(BuildContext context, T entry, int index);
-typedef Future<List<T>> PageFuture<T>(int pageIndex);
+typedef Stream<List<T>> PageStream<T>(int pageIndex);
 typedef Widget ErrorBuilder(BuildContext context, Object error);
 typedef Widget LoadingBuilder(BuildContext context);
 typedef Widget NoItemsFoundBuilder(BuildContext context);
@@ -35,7 +37,7 @@ abstract class Pagewise<T> extends StatefulWidget {
   /// It is provided with the page index, and expected to return a [Future](https://api.dartlang.org/stable/1.24.3/dart-async/Future-class.html) that
   /// resolves to a list of entries. Please make sure to return only [pageSize]
   /// or less entries (in the case of the last page) for each page.
-  final PageFuture<T> pageFuture;
+  final PageStream<T> pageStream;
 
   /// Called when loading each page.
   ///
@@ -107,11 +109,11 @@ abstract class Pagewise<T> extends StatefulWidget {
 
   /// Called to build each entry in the view.
   ///
-  /// It is called for each of the entries fetched by [pageFuture] and provided
+  /// It is called for each of the entries fetched by [pageStream] and provided
   /// with the [BuildContext](https://docs.flutter.io/flutter/widgets/BuildContext-class.html) and the entry. It is expected to return the widget
   /// that we want to display for each entry
   ///
-  /// For example, the [pageFuture] might return a list that looks like:
+  /// For example, the [pageStream] might return a list that looks like:
   /// ```dart
   ///[
   ///  {
@@ -152,7 +154,7 @@ abstract class Pagewise<T> extends StatefulWidget {
   /// constructors of widgets that extend this class
   Pagewise(
       {this.pageSize,
-      this.pageFuture,
+      this.pageStream,
       Key key,
       this.pageLoadController,
       this.loadingBuilder,
@@ -165,10 +167,10 @@ abstract class Pagewise<T> extends StatefulWidget {
       : assert(showRetry != null),
         assert((pageLoadController == null &&
                 pageSize != null &&
-                pageFuture != null) ||
+                pageStream != null) ||
             (pageLoadController != null &&
                 pageSize == null &&
-                pageFuture == null)),
+                pageStream == null)),
         assert(showRetry == false || errorBuilder == null,
             'Cannot specify showRetry and errorBuilder at the same time'),
         assert(showRetry == true || retryBuilder == null,
@@ -193,7 +195,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
 
     if (widget.pageLoadController == null) {
       this._controller = PagewiseLoadController<T>(
-          pageFuture: widget.pageFuture, pageSize: widget.pageSize);
+          pageStream: widget.pageStream, pageSize: widget.pageSize);
     }
 
     this._effectiveController.init();
@@ -218,7 +220,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
         oldWidget.pageLoadController != null) {
       oldWidget.pageLoadController.removeListener(this._controllerListener);
       this._controller = PagewiseLoadController<T>(
-          pageFuture: oldWidget.pageLoadController.pageFuture,
+          pageStream: oldWidget.pageLoadController.pageStream,
           pageSize: oldWidget.pageLoadController.pageSize);
       this._effectiveController.addListener(this._controllerListener);
       this._effectiveController.init();
@@ -342,7 +344,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
 /// one yourself in order to achieve some effects.
 ///
 /// Notice though that if you provide a controller yourself, you should provide
-/// the [pageFuture] and [pageSize] parameters to the *controller* instead of
+/// the [pageStream] and [pageSize] parameters to the *controller* instead of
 /// the widget.
 ///
 /// A possible use case of the controller is to force a reset of the loaded
@@ -352,7 +354,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
 /// ```dart
 /// final _pageLoadController = PagewiseLoadController(
 ///   pageSize: 6,
-///   pageFuture: BackendService.getPage
+///   pageStream: BackendService.getPage
 /// );
 ///
 /// @override
@@ -376,7 +378,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
 /// ```dart
 /// final _pageLoadController = PagewiseLoadController(
 ///   pageSize: 6,
-///   pageFuture: BackendService.getPage
+///   pageStream: BackendService.getPage
 /// );
 ///
 /// bool _empty = false;
@@ -408,21 +410,22 @@ class PagewiseLoadController<T> extends ChangeNotifier {
   bool _hasMoreItems;
   Object _error;
   bool _isFetching;
+  StreamSubscription _streamSubscription;
 
   /// Called whenever a new page (or batch) is to be fetched
   ///
   /// It is provided with the page index, and expected to return a [Future](https://api.dartlang.org/stable/1.24.3/dart-async/Future-class.html) that
   /// resolves to a list of entries. Please make sure to return only [pageSize]
   /// or less entries (in the case of the last page) for each page.
-  final PageFuture<T> pageFuture;
+  final PageStream<T> pageStream;
 
   /// The number  of entries per page
   final int pageSize;
 
   /// Creates a PagewiseLoadController.
   ///
-  /// You must provide both the [pageFuture] and the [pageSize]
-  PagewiseLoadController({@required this.pageFuture, @required this.pageSize});
+  /// You must provide both the [pageStream] and the [pageSize]
+  PagewiseLoadController({@required this.pageStream, @required this.pageSize});
 
   /// The list of items that have already been loaded
   List<T> get loadedItems => this._loadedItems;
@@ -447,6 +450,8 @@ class PagewiseLoadController<T> extends ChangeNotifier {
 
   /// Resets all the information of the controller
   void reset() {
+    _streamSubscription?.cancel();
+    _streamSubscription = null;
     this._appendedItems = [];
     this._loadedItems = [];
     this._numberOfLoadedPages = 0;
@@ -456,46 +461,44 @@ class PagewiseLoadController<T> extends ChangeNotifier {
     this.notifyListeners();
   }
 
-  /// Fetches a new page by calling [pageFuture]
-  Future<void> fetchNewPage() async {
+  /// Fetches a new page by calling [pageStream]
+  StreamSubscription<void> fetchNewPage()  {
     if (!this._isFetching) {
       this._isFetching = true;
-
-      List<T> page;
-      try {
-        page = await this.pageFuture(this._numberOfLoadedPages);
+      _streamSubscription = this.pageStream(this._numberOfLoadedPages)
+      .listen((event) {
+        List<T> page = event;
         this._numberOfLoadedPages++;
-      } catch (error) {
+        // Get length accounting for possible null Future return. We'l treat a null Future as an empty return
+        final int length = (page?.length ?? 0);
+
+        if (length > this.pageSize) {
+          this._isFetching = false;
+          throw ('Page length ($length) is greater than the maximum size (${this.pageSize})');
+        }
+
+        if (length > 0 && length < this.pageSize) {
+          // This should only happen when loading the last page.
+          // In that case, we append the last page with a few items to make its size
+          // similar to normal pages. This is useful especially with GridView,
+          // because we want the loading to show on a new line on its own
+          this._appendedItems = List.generate(this.pageSize - length, (_) => {});
+        }
+
+        if (length == 0) {
+          this._hasMoreItems = false;
+        } else {
+          this._loadedItems.addAll(page);
+        }
+        this._isFetching = false;
+        notifyListeners();
+      }, onError: (error, stack) {
         this._error = error;
         this._isFetching = false;
         this.notifyListeners();
-        return;
-      }
-
-      // Get length accounting for possible null Future return. We'l treat a null Future as an empty return
-      final int length = (page?.length ?? 0);
-
-      if (length > this.pageSize) {
-        this._isFetching = false;
-        throw ('Page length ($length) is greater than the maximum size (${this.pageSize})');
-      }
-
-      if (length > 0 && length < this.pageSize) {
-        // This should only happen when loading the last page.
-        // In that case, we append the last page with a few items to make its size
-        // similar to normal pages. This is useful especially with GridView,
-        // because we want the loading to show on a new line on its own
-        this._appendedItems = List.generate(this.pageSize - length, (_) => {});
-      }
-
-      if (length == 0) {
-        this._hasMoreItems = false;
-      } else {
-        this._loadedItems.addAll(page);
-      }
-      this._isFetching = false;
-      notifyListeners();
+      });
     }
+    return _streamSubscription;
   }
 
   /// Attempts to retry in case an error occurred
@@ -503,6 +506,17 @@ class PagewiseLoadController<T> extends ChangeNotifier {
     this._error = null;
     this.notifyListeners();
   }
+
+  void removeItem(bool Function(T item) hit) {
+    this._loadedItems.removeWhere(hit);
+    this.notifyListeners();
+  }
+
+  void removeAtIndex(int index) {
+    this._loadedItems.removeAt(index);
+    this.notifyListeners();
+  }
+
 }
 
 class PagewiseListView<T> extends Pagewise<T> {
@@ -527,7 +541,7 @@ class PagewiseListView<T> extends Pagewise<T> {
       ScrollPhysics physics,
       bool reverse: false,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -536,7 +550,7 @@ class PagewiseListView<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
@@ -590,7 +604,7 @@ class PagewiseGridView<T> extends Pagewise<T> {
       ScrollPhysics physics,
       bool reverse: false,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -599,7 +613,7 @@ class PagewiseGridView<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
@@ -657,7 +671,7 @@ class PagewiseGridView<T> extends Pagewise<T> {
       ScrollPhysics physics,
       bool reverse: false,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -666,7 +680,7 @@ class PagewiseGridView<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
@@ -718,7 +732,7 @@ class PagewiseSliverList<T> extends Pagewise<T> {
       int semanticIndexOffset = 0,
       PagewiseLoadController<T> pageLoadController,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -727,7 +741,7 @@ class PagewiseSliverList<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
@@ -768,7 +782,7 @@ class PagewiseSliverGrid<T> extends Pagewise<T> {
       double mainAxisSpacing = 0.0,
       PagewiseLoadController<T> pageLoadController,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -777,7 +791,7 @@ class PagewiseSliverGrid<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
@@ -823,7 +837,7 @@ class PagewiseSliverGrid<T> extends Pagewise<T> {
       double mainAxisSpacing = 0.0,
       PagewiseLoadController<T> pageLoadController,
       int pageSize,
-      PageFuture<T> pageFuture,
+      PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
@@ -832,7 +846,7 @@ class PagewiseSliverGrid<T> extends Pagewise<T> {
       ErrorBuilder errorBuilder})
       : super(
             pageSize: pageSize,
-            pageFuture: pageFuture,
+            pageStream: pageStream,
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,

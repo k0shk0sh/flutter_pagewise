@@ -57,7 +57,7 @@ class PagewiseGridViewExample extends StatelessWidget {
       childAspectRatio: 0.555,
       padding: EdgeInsets.all(15.0),
       itemBuilder: this._itemBuilder,
-      pageFuture: (pageIndex) =>
+      pageStream: (pageIndex) =>
           BackendService.getImages(pageIndex * PAGE_SIZE, PAGE_SIZE),
     );
   }
@@ -111,7 +111,7 @@ class PagewiseListViewExample extends StatelessWidget {
     return PagewiseListView(
         pageSize: PAGE_SIZE,
         itemBuilder: this._itemBuilder,
-        pageFuture: (pageIndex) =>
+        pageStream: (pageIndex) =>
             BackendService.getPosts(pageIndex * PAGE_SIZE, PAGE_SIZE));
   }
 
@@ -146,7 +146,7 @@ class PagewiseSliverListExample extends StatelessWidget {
       PagewiseSliverList(
           pageSize: PAGE_SIZE,
           itemBuilder: this._itemBuilder,
-          pageFuture: (pageIndex) =>
+          pageStream: (pageIndex) =>
               BackendService.getPosts(pageIndex * PAGE_SIZE, PAGE_SIZE))
     ]);
   }
@@ -189,7 +189,7 @@ class PagewiseSliverGridExample extends StatelessWidget {
             crossAxisSpacing: 8.0,
             childAspectRatio: 0.555,
             itemBuilder: this._itemBuilder,
-            pageFuture: (pageIndex) =>
+            pageStream: (pageIndex) =>
                 BackendService.getImages(pageIndex * PAGE_SIZE, PAGE_SIZE),
           ),
         )
@@ -239,22 +239,17 @@ class PagewiseSliverGridExample extends StatelessWidget {
 }
 
 class BackendService {
-  static Future<List<PostModel>> getPosts(offset, limit) async {
-    final responseBody = (await http.get(
-            'http://jsonplaceholder.typicode.com/posts?_start=$offset&_limit=$limit'))
-        .body;
-
-    // The response body is an array of items
-    return PostModel.fromJsonList(json.decode(responseBody));
+  static Stream<List<PostModel>> getPosts(offset, limit)  {
+    return http.get('http://jsonplaceholder.typicode'
+        '.com/posts?_start=$offset&_limit=$limit').asStream()
+        .map((response) => PostModel.fromJsonList(json.decode(response.body)));
   }
 
-  static Future<List<ImageModel>> getImages(offset, limit) async {
-    final responseBody = (await http.get(
-            'http://jsonplaceholder.typicode.com/photos?_start=$offset&_limit=$limit'))
-        .body;
-
-    // The response body is an array of items.
-    return ImageModel.fromJsonList(json.decode(responseBody));
+  static Stream<List<ImageModel>> getImages(offset, limit) {
+    return http.get(
+        'http://jsonplaceholder.typicode.com/photos?_start=$offset&_limit=$limit')
+        .asStream()
+        .map((response) => ImageModel.fromJsonList(json.decode(response.body)));
   }
 }
 
