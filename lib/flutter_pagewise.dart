@@ -339,7 +339,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       alignment: widget.loadingAlignment != null
-          ? widget.loadingAlignment(widget.pageLoadController.itemCount > 0)
+          ? widget.loadingAlignment(widget.pageLoadController.itemCount == 0)
           : Alignment.topCenter,
       child: child,
     );
