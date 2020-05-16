@@ -13,6 +13,7 @@ typedef Widget NoItemsFoundBuilder(BuildContext context);
 typedef Widget RetryBuilder(BuildContext context, RetryCallback retryCallback);
 typedef void RetryCallback();
 typedef Widget PagewiseBuilder<T>(PagewiseState<T> state);
+typedef Alignment LoadingAlignment(bool isEmpty);
 
 /// An abstract base class for widgets that fetch their content one page at a
 /// time.
@@ -51,6 +52,12 @@ abstract class Pagewise<T> extends StatefulWidget {
   ///
   /// If not specified, a [CircularProgressIndicator](https://docs.flutter.io/flutter/material/CircularProgressIndicator-class.html) will be shown
   final LoadingBuilder loadingBuilder;
+
+  /// Called when loading each page started
+  ///
+  /// It is expected to return an Alignment to align the result of loadingBuilder
+  /// If not specified, TopCenter is acting as default
+  final LoadingAlignment loadingAlignment;
 
   /// Called with an error object if an error occurs when loading the page
   ///
@@ -158,6 +165,7 @@ abstract class Pagewise<T> extends StatefulWidget {
       Key key,
       this.pageLoadController,
       this.loadingBuilder,
+      this.loadingAlignment,
       this.retryBuilder,
       this.noItemsFoundBuilder,
       this.showRetry: true,
@@ -331,7 +339,9 @@ class PagewiseState<T> extends State<Pagewise<T>> {
     return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8.0),
         child: Align(
-          alignment: Alignment.topCenter,
+          alignment: widget.loadingAlignment != null
+              ? widget.loadingAlignment(widget.pageLoadController.itemCount > 0)
+              : Alignment.topCenter,
           child: child,
         ));
   }
@@ -432,6 +442,8 @@ class PagewiseLoadController<T> extends ChangeNotifier {
 
   /// The number of pages that have already been loaded
   int get numberOfLoadedPages => this._numberOfLoadedPages;
+
+  int get itemCount => this._loadedItems?.length ?? 0;
 
   /// Whether there are still more items to load
   bool get hasMoreItems => this._hasMoreItems;
@@ -543,6 +555,7 @@ class PagewiseListView<T> extends Pagewise<T> {
       int pageSize,
       PageStream<T> pageStream,
       LoadingBuilder loadingBuilder,
+      LoadingAlignment loadingAlignment,
       RetryBuilder retryBuilder,
       NoItemsFoundBuilder noItemsFoundBuilder,
       bool showRetry: true,
@@ -554,6 +567,7 @@ class PagewiseListView<T> extends Pagewise<T> {
             pageLoadController: pageLoadController,
             key: key,
             loadingBuilder: loadingBuilder,
+            loadingAlignment: loadingAlignment,
             retryBuilder: retryBuilder,
             showRetry: showRetry,
             itemBuilder: itemBuilder,
