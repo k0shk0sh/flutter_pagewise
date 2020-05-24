@@ -8,7 +8,7 @@ import 'package:flutter_pagewise/helpers/grid_helpers.dart';
 typedef Widget ItemBuilder<T>(BuildContext context, T entry, int index);
 typedef Stream<List<T>> PageStream<T>(int pageIndex);
 typedef Widget ErrorBuilder(BuildContext context, Object error);
-typedef Widget LoadingBuilder(BuildContext context);
+typedef Widget LoadingBuilder(BuildContext context, int itemCount);
 typedef Widget NoItemsFoundBuilder(BuildContext context);
 typedef Widget RetryBuilder(BuildContext context, RetryCallback retryCallback);
 typedef void RetryCallback();
@@ -297,7 +297,7 @@ class PagewiseState<T> extends State<Pagewise<T>> {
   Widget _getLoadingWidget() {
     return this._getStandardContainer(
         child: widget.loadingBuilder != null
-            ? widget.loadingBuilder(context)
+            ? widget.loadingBuilder(context, widget.pageLoadController.itemCount)
             : CircularProgressIndicator());
   }
 
